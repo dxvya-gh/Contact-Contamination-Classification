@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartLogix ESP32 IoT Dashboard & Contamination-Risk Estimator</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Navigation / Header -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+            <rect x="9" y="9" width="6" height="6" />
+            <line x1="9" y1="1" x2="9" y2="4" />
+            <line x1="15" y1="1" x2="15" y2="4" />
+            <line x1="9" y1="20" x2="9" y2="23" />
+            <line x1="15" y1="20" x2="15" y2="23" />
+            <line x1="20" y1="9" x2="23" y2="9" />
+            <line x1="20" y1="14" x2="23" y2="14" />
+            <line x1="1" y1="9" x2="4" y2="9" />
+            <line x1="1" y1="14" x2="4" y2="14" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">SmartLogix ESP32 Monitor</h1>
+          <span class="device-tag">Target: <code>devices/door-01/latest</code> &bull; <span class="tag-provisional">Provisional Risk Model v1.0</span></span>
+        </div>
+      </div>
+
+      <div class="header-status">
+        <!-- Firebase Connection Status Badge -->
+        <div id="connection-status-pill" class="status-pill status-disconnected" title="Realtime Database connection">
+          <span class="status-dot"></span>
+          <span id="connection-status-text">Disconnected</span>
+        </div>
+
+        <!-- User Profile & Sign Out (Visible when logged in) -->
+        <div id="user-controls" class="user-controls hidden">
+          <span id="user-display-email" class="user-email"></span>
+          <button id="signout-button" class="btn btn-secondary btn-sm" type="button">Sign Out</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- 1. Authentication View (Displayed when not logged in) -->
+      <section id="auth-section" class="auth-section">
+        <div class="auth-card">
+          <div class="auth-header">
+            <div class="auth-badge">Secure Access</div>
+            <h2>Sign in to IoT Dashboard</h2>
+            <p>Authenticate with your Firebase account to view live telemetry and contamination-risk estimates.</p>
+          </div>
+
+          <!-- Login Error State Container -->
+          <div id="login-error-alert" class="alert alert-error hidden" role="alert">
+            <svg class="alert-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <div class="alert-content">
+              <strong>Authentication failed</strong>
+              <span id="login-error-message">Invalid email or password.</span>
+            </div>
+          </div>
+
+          <form id="login-form" class="auth-form" novalidate>
+            <div class="form-group">
+              <label for="login-email">Email Address</label>
+              <input 
+                type="email" 
+                id="login-email" 
+                class="form-control" 
+                placeholder="developer@example.com" 
+                required 
+                autocomplete="email"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="login-password">Password</label>
+              <input 
+                type="password" 
+                id="login-password" 
+                class="form-control" 
+                placeholder="••••••••••••" 
+                required 
+                autocomplete="current-password"
+              />
+            </div>
+
+            <button type="submit" id="login-button" class="btn btn-primary btn-block">
+              <span class="btn-text">Sign In</span>
+              <span class="btn-spinner hidden"></span>
+            </button>
+          </form>
+
+          <div class="auth-help-box">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="16" x2="12" y2="12"/>
+              <line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            <p>
+              <strong>Getting started:</strong> Create a user in <em>Firebase Console &gt; Authentication &gt; Users</em> with Email/Password sign-in enabled.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. Dashboard View (Displayed after successful authentication) -->
+      <section id="dashboard-section" class="dashboard-section hidden">
+
+        <!-- Global State Alert Banners -->
+        <!-- Loading State Banner -->
+        <div id="loading-banner" class="alert alert-info">
+          <div class="spinner"></div>
+          <div class="alert-content">
+            <strong>Subscribing to Realtime Database...</strong>
+            <span>Listening for live updates at path: <code>devices/door-01/latest</code></span>
+          </div>
+        </div>
+
+        <!-- Missing Data State Banner -->
+        <div id="missing-data-banner" class="alert alert-warning hidden">
+          <svg class="alert-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <div class="alert-content">
+            <strong>No sensor data found at <code>devices/door-01/latest</code></strong>
+            <span>The path is currently empty. Make sure your ESP32 is powered on, connected to Wi-Fi, and publishing telemetry.</span>
+          </div>
+        </div>
+
+        <!-- Permission Denied State Banner -->
+        <div id="permission-error-banner" class="alert alert-error hidden">
+          <svg class="alert-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <div class="alert-content">
+            <strong>Database Permission Denied</strong>
+            <span>Your signed-in user does not have permission to read <code>devices/door-01/latest</code>. Please check your Firebase Realtime Database Security Rules.</span>
+          </div>
+        </div>
+
+        <!-- Sanitization Recommended Alert Banner (Threshold Crossed >= 75) -->
+        <div id="sanitization-alert-banner" class="alert alert-critical hidden" role="alert">
+          <div class="alert-icon-pulse">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </div>
+          <div class="alert-content flex-grow">
+            <div class="alert-title-row">
+              <strong class="alert-headline">Sanitization Recommended: Threshold Exceeded</strong>
+              <span id="alert-score-chip" class="score-chip chip-critical">Score: <span id="alert-score-num">--</span> / 100</span>
+            </div>
+            <p class="alert-text">
+              The estimated contamination-risk score has reached or crossed the configured threshold of <strong id="alert-threshold-num">75</strong>. Surface sanitization is recommended according to the provisional touch-frequency model.
+            </p>
+            <span class="disclaimer-note">Note: This is an empirical contact-frequency estimate, not a verified pathogen count.</span>
+          </div>
+          <button id="alert-sanitize-btn" class="btn btn-warning btn-sm" type="button">Mark as Sanitized</button>
+        </div>
+
+        <!-- ================================================================= -->
+        <!-- SECTION A: CONTAMINATION-RISK ESTIMATOR PANEL                     -->
+        <!-- ================================================================= -->
+        <section class="risk-panel-container">
+          <div class="section-title-bar">
+            <div>
+              <div class="heading-with-info">
+                <h2 class="section-heading">Estimated Contamination Risk</h2>
+                <button id="algo-info-btn" class="info-icon-btn" type="button" aria-label="How is estimated risk calculated?" title="How is estimated risk calculated?">ⓘ</button>
+              </div>
+              <span class="section-subtext">Deterministic contact-decay model &bull; Calibrated dual-zone touch &bull; SHT31 persistence modifier</span>
+            </div>
+            <div class="section-actions">
+              <button id="open-sanitize-modal-btn" class="btn btn-sanitize" type="button">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                </svg>
+                <span>Mark as Sanitized</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Hero Risk Card -->
+          <div class="risk-hero-card">
+            <div class="risk-hero-main">
+              <!-- Score Display -->
+              <div class="risk-score-display">
+                <span class="risk-score-label">Estimated Risk Score</span>
+                <div class="risk-score-number-row">
+                  <span id="risk-score-value" class="risk-score-large">--</span>
+                  <span class="risk-score-max">/ 100</span>
+                </div>
+                <div class="risk-badge-wrapper">
+                  <span id="risk-level-badge" class="risk-level-pill pill-neutral">Calculating...</span>
+                  <span class="risk-threshold-tag">Threshold: <strong id="hero-threshold-display">75</strong></span>
+                </div>
+              </div>
+
+              <!-- Bar & Spectrum -->
+              <div class="risk-bar-column">
+                <div class="risk-bar-header">
+                  <span class="bar-title">Risk Level Spectrum</span>
+                  <span id="risk-band-desc" class="bar-status-text">Awaiting telemetry snapshot</span>
+                </div>
+                <!-- Continuous Progress Bar with Threshold Pin -->
+                <div class="risk-progress-track">
+                  <div id="risk-progress-fill" class="risk-progress-fill" style="width: 0%;"></div>
+                  <!-- Threshold Marker at 75% -->
+                  <div class="risk-threshold-pin" style="left: 75%;" title="Configured Sanitization Threshold (75)">
+                    <span class="pin-line"></span>
+                    <span class="pin-tag">Threshold (75)</span>
+                  </div>
+                </div>
+                <!-- Band Legend -->
+                <div class="risk-bands-legend">
+                  <div class="band-item band-low"><span class="band-dot"></span><span>Low (0–24)</span></div>
+                  <div class="band-item band-elevated"><span class="band-dot"></span><span>Elevated (25–49)</span></div>
+                  <div class="band-item band-high"><span class="band-dot"></span><span>High (50–74)</span></div>
+                  <div class="band-item band-critical"><span class="band-dot"></span><span>Critical (75–100)</span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Score Explanation Banner -->
+            <div class="score-explanation-box">
+              <div class="explanation-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="16" x2="12" y2="12"/>
+                  <line x1="12" y1="8" x2="12.01" y2="8"/>
+                </svg>
+              </div>
+              <div class="explanation-text-col">
+                <span class="explanation-title">Score Dynamics &amp; Cause:</span>
+                <span id="score-explanation-text" class="explanation-body">Awaiting model telemetry to explain score transitions.</span>
+              </div>
+              <div class="explanation-delta-col">
+                <span class="delta-label">Last Delta</span>
+                <span id="score-delta-chip" class="delta-chip chip-neutral">--</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Risk Metrics 4-Grid -->
+          <div class="risk-metrics-grid">
+            <!-- Card 1: Touch Events Breakdown -->
+            <article class="metric-card risk-subcard">
+              <div class="metric-header">
+                <span class="metric-title">Confirmed Contact Events</span>
+                <div class="metric-icon icon-touch">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>
+                  </svg>
+                </div>
+              </div>
+              <div class="metric-body">
+                <div class="metric-main-value">
+                  <span id="total-touches-value" class="value-highlight">--</span>
+                  <span class="metric-unit">events</span>
+                </div>
+                <div class="counters-split-row">
+                  <div class="split-col">
+                    <span class="split-label">Single-Zone (+4)</span>
+                    <span id="single-touches-value" class="split-num">--</span>
+                  </div>
+                  <div class="split-col">
+                    <span class="split-label">Dual-Zone (+6)</span>
+                    <span id="dual-touches-value" class="split-num">--</span>
+                  </div>
+                </div>
+                <div class="metric-meta">
+                  <span class="meta-label">300ms window &bull; No double-counting</span>
+                </div>
+              </div>
+            </article>
+
+            <!-- Card 2: Recent Contact Telemetry -->
+            <article class="metric-card risk-subcard">
+              <div class="metric-header">
+                <span class="metric-title">Most Recent Contact</span>
+                <div class="metric-icon icon-clock">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                </div>
+              </div>
+              <div class="metric-body">
+                <div class="touch-summary-row">
+                  <div>
+                    <span class="touch-field-label">Classification</span>
+                    <span id="recent-touch-type" class="touch-highlight-text">--</span>
+                  </div>
+                  <div>
+                    <span class="touch-field-label">Last Duration</span>
+                    <span id="recent-touch-duration" class="touch-duration-chip">-- ms</span>
+                  </div>
+                </div>
+                <div class="hold-active-row">
+                  <span class="touch-field-label">Active Hold</span>
+                  <span class="hold-duration-badge">
+                    <span id="active-hold-duration">0s</span>
+                    <span id="active-hold-points" class="hold-points-tag">(+0 pts)</span>
+                  </span>
+                </div>
+                <div class="metric-meta">
+                  <span class="meta-label">Time: <span id="recent-touch-time">--</span> &bull; +2 pts / 5s hold</span>
+                </div>
+              </div>
+            </article>
+
+            <!-- Card 3: Time Decay & Environment Modifier -->
+            <article class="metric-card risk-subcard">
+              <div class="metric-header">
+                <span class="metric-title">Decay Timescale (&tau;)</span>
+                <div class="metric-icon icon-temperature">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                  </svg>
+                </div>
+              </div>
+              <div class="metric-body">
+                <div class="metric-main-value">
+                  <span id="decay-tau-value" class="value-highlight">--</span>
+                  <span class="metric-unit">min</span>
+                </div>
+                <div class="metric-meta-stats">
+                  <span class="meta-line">Humidity Modifier (M<sub>hum</sub>): <strong id="hum-modifier-value">1.00&times;</strong></span>
+                  <span class="meta-line">Temp Modifier (M<sub>temp</sub>): <strong id="temp-modifier-value">1.00&times;</strong></span>
+                  <span class="meta-line">Combined &tau; Factor: <strong id="env-modifier-value">1.00&times;</strong></span>
+                </div>
+                <div class="metric-meta">
+                  <span class="meta-label">&tau;<sub>eff</sub> = &tau;<sub>base</sub> &times; M<sub>hum</sub> &times; M<sub>temp</sub></span>
+                </div>
+              </div>
+            </article>
+
+            <!-- Card 4: Sanitization History Status -->
+            <article class="metric-card risk-subcard">
+              <div class="metric-header">
+                <span class="metric-title">Sanitization State</span>
+                <div class="metric-icon icon-cloud">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                  </svg>
+                </div>
+              </div>
+              <div class="metric-body">
+                <div class="sanitization-state-row">
+                  <span id="sanitization-status-pill" class="touch-state-badge badge-untouched">
+                    <span class="touch-state-dot"></span>
+                    <span id="sanitization-status-text">Normal</span>
+                  </span>
+                </div>
+                <div class="metric-meta-stats">
+                  <span class="meta-line">Last Sanitized: <strong id="last-sanitized-time">None recorded</strong></span>
+                  <span class="meta-line">Score Before: <strong id="pre-sanitize-score">--</strong></span>
+                </div>
+                <div class="metric-meta">
+                  <span class="meta-label">Authoritative ESP32 state sync</span>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <!-- Chart & Event Timeline Row -->
+          <div class="risk-chart-timeline-grid">
+            <!-- Left: Realtime Risk Score History Chart -->
+            <div class="chart-card">
+              <div class="chart-header">
+                <div>
+                  <h3 class="chart-title">Estimated Risk Score Trend</h3>
+                  <span class="chart-sub">Real telemetry history &bull; Red line indicates sanitization threshold (75)</span>
+                </div>
+                <span id="chart-points-count" class="meta-badge badge-neutral">0 points</span>
+              </div>
+              <div class="chart-canvas-wrapper">
+                <canvas id="risk-score-canvas" width="600" height="220"></canvas>
+                <div id="chart-empty-state" class="chart-empty-overlay">
+                  <span>Awaiting telemetry snapshots to plot risk trend...</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right: Activity History Log -->
+            <div class="timeline-card">
+              <div class="timeline-header">
+                <h3 class="chart-title">Recent Activity History</h3>
+                <span class="chart-sub">Real-time model events, touch contacts, &amp; sanitizations</span>
+              </div>
+              <div class="timeline-table-container">
+                <table class="timeline-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Event</th>
+                      <th>Delta</th>
+                      <th>Score</th>
+                    </tr>
+                  </thead>
+                  <tbody id="activity-log-body">
+                    <tr class="empty-row">
+                      <td colspan="4">No activity recorded yet</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================================================================= -->
+        <!-- SECTION B: SENSOR HARDWARE CHANNELS (PRESERVED & ENHANCED)        -->
+        <!-- ================================================================= -->
+        <div class="section-title-bar mt-lg">
+          <div>
+            <h2 class="section-heading">Sensor Telemetry &amp; Hardware Status</h2>
+            <span class="section-subtext">Live readings from SHT31 sensor &amp; ESP32 capacitive touch electrodes</span>
+          </div>
+        </div>
+
+        <div class="metrics-grid">
+          <!-- Card 1: Temperature -->
+          <article class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Temperature</span>
+              <div class="metric-icon icon-temperature">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>
+                </svg>
+              </div>
+            </div>
+            <div class="metric-body">
+              <div class="metric-main-value">
+                <span id="temp-value" class="value-highlight">--</span>
+                <span class="metric-unit">°C</span>
+              </div>
+              <div class="metric-meta">
+                <span id="temp-status" class="meta-badge badge-neutral">Awaiting reading</span>
+                <span class="meta-label">Ambient sensor (SHT31)</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- Card 2: Humidity -->
+          <article class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Humidity</span>
+              <div class="metric-icon icon-humidity">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+                </svg>
+              </div>
+            </div>
+            <div class="metric-body">
+              <div class="metric-main-value">
+                <span id="humidity-value" class="value-highlight">--</span>
+                <span class="metric-unit">%</span>
+              </div>
+              <div class="metric-meta">
+                <span id="humidity-status" class="meta-badge badge-neutral">Awaiting reading</span>
+                <span class="meta-label">Relative humidity (SHT31)</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- Card 3: GPIO12 Touch Sensor -->
+          <article class="metric-card" id="card-gpio12">
+            <div class="metric-header">
+              <span class="metric-title">GPIO12 Touch Sensor</span>
+              <div class="metric-icon icon-touch">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/>
+                  <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/>
+                  <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/>
+                  <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>
+                </svg>
+              </div>
+            </div>
+            <div class="metric-body">
+              <div class="touch-metric-row">
+                <div>
+                  <span class="touch-field-label">Touch Status</span>
+                  <div id="gpio12-status-badge" class="touch-state-badge badge-untouched">
+                    <span class="touch-state-dot"></span>
+                    <span id="gpio12-status-text">--</span>
+                  </div>
+                </div>
+                <div>
+                  <span class="touch-field-label">Raw Touch Value</span>
+                  <div class="touch-raw-value">
+                    <span id="gpio12-raw-value">--</span>
+                  </div>
+                </div>
+              </div>
+              <div class="metric-meta">
+                <span class="meta-label">Capacitive Touch Zone 1</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- Card 4: GPIO14 Touch Sensor -->
+          <article class="metric-card" id="card-gpio14">
+            <div class="metric-header">
+              <span class="metric-title">GPIO14 Touch Sensor</span>
+              <div class="metric-icon icon-touch">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/>
+                  <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/>
+                  <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/>
+                  <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>
+                </svg>
+              </div>
+            </div>
+            <div class="metric-body">
+              <div class="touch-metric-row">
+                <div>
+                  <span class="touch-field-label">Touch Status</span>
+                  <div id="gpio14-status-badge" class="touch-state-badge badge-untouched">
+                    <span class="touch-state-dot"></span>
+                    <span id="gpio14-status-text">--</span>
+                  </div>
+                </div>
+                <div>
+                  <span class="touch-field-label">Raw Touch Value</span>
+                  <div class="touch-raw-value">
+                    <span id="gpio14-raw-value">--</span>
+                  </div>
+                </div>
+              </div>
+              <div class="metric-meta">
+                <span class="meta-label">Capacitive Touch Zone 2</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- Card 5: Last Updated Timestamp -->
+          <article class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Last Updated</span>
+              <div class="metric-icon icon-clock">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12 6 12 12 16 14"/>
+                </svg>
+              </div>
+            </div>
+            <div class="metric-body">
+              <div class="metric-main-value time-display">
+                <span id="last-updated-text" class="timestamp-text">--</span>
+              </div>
+              <div class="metric-meta">
+                <span id="time-ago-badge" class="meta-badge badge-neutral">No data</span>
+                <span id="sync-source-label" class="meta-label">RTDB push sync</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- Card 6: Firebase Connection Status -->
+          <article class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Firebase Status</span>
+              <div class="metric-icon icon-cloud">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
+                </svg>
+              </div>
+            </div>
+            <div class="metric-body">
+              <div class="metric-main-value">
+                <span id="firebase-connection-label" class="value-highlight connection-highlight">Connecting...</span>
+              </div>
+              <div class="metric-meta">
+                <span id="firebase-latency-badge" class="meta-badge badge-info">.info/connected</span>
+                <span class="meta-label">Live RTDB websocket</span>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <!-- Raw Payload Inspector (Helps verify ESP32 telemetry format) -->
+        <section class="raw-data-section">
+          <details class="raw-details">
+            <summary class="raw-summary">
+              <span>View Raw Telemetry Payload (JSON)</span>
+              <span class="summary-hint">Inspect actual keys received from ESP32</span>
+            </summary>
+            <div class="raw-content">
+              <pre><code id="raw-payload-display">// Waiting for incoming Firebase snapshot...</code></pre>
+            </div>
+          </details>
+        </section>
+      </section>
+    </main>
+
+    <!-- Sanitization Confirmation Modal -->
+    <div id="sanitization-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-icon-wrapper">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+          <div>
+            <h3 id="modal-title" class="modal-title">Confirm Sanitization Action</h3>
+            <span class="modal-subtitle">Target Surface: Door Handle 01 (door-01)</span>
+          </div>
+        </div>
+        <div class="modal-body">
+          <p class="modal-desc">
+            You are recording that physical cleaning or sanitization has been performed on this surface.
+          </p>
+          <div class="modal-info-box">
+            <ul>
+              <li>Resets the modeled risk score to <strong>0.0</strong></li>
+              <li>Clears any active sanitization recommendations</li>
+              <li>Logs an authoritative sanitization event and timestamp</li>
+              <li><strong>Authoritative sync:</strong> Sends an authenticated reset command to Firebase &amp; ESP32</li>
+            </ul>
+          </div>
+          <p class="modal-disclaimer">
+            <em>Important Notice:</em> This action logs an operator-recorded intervention. It represents modeled score clearance and does not certify biological sterility.
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button id="modal-cancel-btn" class="btn btn-secondary" type="button">Cancel</button>
+          <button id="modal-confirm-btn" class="btn btn-primary btn-sanitize-confirm" type="button">
+            <span class="btn-text">Confirm &amp; Reset Score</span>
+            <span class="btn-spinner hidden"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Algorithm Information Modal -->
+    <div id="algo-info-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="algo-modal-title">
+      <div class="modal-card algo-modal-card">
+        <div class="modal-header">
+          <div class="modal-icon-wrapper info-icon-wrapper">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="16" x2="12" y2="12"/>
+              <line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+          </div>
+          <div class="flex-grow">
+            <h3 id="algo-modal-title" class="modal-title">How is estimated risk calculated?</h3>
+            <span class="modal-subtitle">Deterministic Contact-Decay Algorithm &bull; Model v1.0</span>
+          </div>
+          <button id="algo-modal-close-btn" class="modal-close-icon" type="button" aria-label="Close algorithm information popup">&times;</button>
+        </div>
+        <div class="modal-body algo-modal-body">
+          <!-- Section A: Contact Detection -->
+          <div class="algo-section">
+            <h4 class="algo-subheading">A. Contact Detection</h4>
+            <p>The ESP32 samples capacitive touch electrodes on <strong>GPIO12</strong> and <strong>GPIO14</strong> approximately every 100&nbsp;ms. A confirmed contact event begins when raw capacitive readings fall below calibrated baseline thresholds with confirmation/debounce filtering to reject transient electrical noise. When a zone activates, a <strong id="info-window-ms">300</strong>&nbsp;ms classification window is evaluated before finalizing the event.</p>
+          </div>
+
+          <!-- Section B: Event Weights & Hold Duration Scoring -->
+          <div class="algo-section">
+            <h4 class="algo-subheading">B. Event Weights &amp; Hold Duration Scoring</h4>
+            <ul class="algo-list">
+              <li><strong>Confirmed Single-Zone Contact:</strong> +<span id="info-weight-single">4</span> provisional points at contact onset (doubled from +2).</li>
+              <li><strong>Confirmed Dual-Zone Contact:</strong> +<span id="info-weight-dual">6</span> provisional points at contact onset (doubled from +3).</li>
+              <li><strong>Hold Duration Scoring:</strong> Adds +<span id="info-weight-hold">2</span> points for each completed <span id="info-hold-interval">5</span>-second interval of uninterrupted contact (capped at +10 pts max). Points are awarded once as each discrete 5s interval is crossed and cannot be re-awarded.</li>
+              <li><strong>Unified Dual-Zone Hold:</strong> When both zones are held simultaneously, hold intervals are evaluated on the unified contact session without double-counting between zones.</li>
+              <li><strong>Dual-Zone Classification Window:</strong> Evaluates simultaneous contacts within a <span id="info-window-ms-2">300</span>&nbsp;ms window as a single dual-zone event (+6 pts), never as two single touches plus a dual touch.</li>
+            </ul>
+          </div>
+
+          <!-- Section C: Time Decay -->
+          <div class="algo-section">
+            <h4 class="algo-subheading">C. Time Decay Formula</h4>
+            <div class="formula-box">
+              <code>R(t) = R(previous) &times; exp(-&Delta;t / &tau;<sub>effective</sub>)</code>
+            </div>
+            <p>Elapsed time gradually reduces the modeled risk score. The model uses a base persistence timescale (&tau;<sub>base</sub>) of <strong id="info-base-tau">30</strong> minutes, calculated on monotonic elapsed time rather than loop iterations.</p>
+          </div>
+
+          <!-- Section D: Humidity & Environmental Inputs -->
+          <div class="algo-section">
+            <h4 class="algo-subheading">D. Humidity &amp; Environmental Persistence Modifiers</h4>
+            <p>Valid readings from the <strong>SHT31 sensor</strong> modulate the effective persistence timescale (&tau;<sub>effective</sub> = &tau;<sub>base</sub> &times; M<sub>hum</sub> &times; M<sub>temp</sub>), affecting how quickly risk decays over time:</p>
+            <div class="algo-table-wrapper">
+              <table class="algo-spec-table">
+                <thead>
+                  <tr>
+                    <th>Relative Humidity (RH)</th>
+                    <th>Modifier (M<sub>hum</sub>)</th>
+                    <th>Model Heuristic Effect</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>&lt; 35%</code> (Dry)</td>
+                    <td><strong>0.80&times;</strong></td>
+                    <td>Accelerates decay / shorter persistence (dry desiccation)</td>
+                  </tr>
+                  <tr>
+                    <td><code>35% – 65%</code> (Normal)</td>
+                    <td><strong>1.00&times;</strong></td>
+                    <td>Neutral indoor baseline timescale</td>
+                  </tr>
+                  <tr>
+                    <td><code>65% – 80%</code> (Humid)</td>
+                    <td><strong>1.20&times;</strong></td>
+                    <td>Slows decay / longer persistence (droplet retention)</td>
+                  </tr>
+                  <tr>
+                    <td><code>&gt; 80%</code> (Very Humid)</td>
+                    <td><strong>1.35&times;</strong></td>
+                    <td>Maximum bounded persistence multiplier</td>
+                  </tr>
+                  <tr>
+                    <td><em>Invalid / Missing</em></td>
+                    <td><strong>1.00&times;</strong></td>
+                    <td>Documented safe neutral fallback</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="mt-xs">
+              <strong>Temperature Modifier (M<sub>temp</sub>):</strong> Centered at 22°C with +0.01/°C, clamped between <code>0.85&times; and 1.15&times;</code>. The combined environmental modifier is bounded within <span id="info-env-range">0.70&times; to 1.50&times;</span>.
+            </p>
+          </div>
+
+          <!-- Section E: Score Limits & Risk Bands -->
+          <div class="algo-section">
+            <h4 class="algo-subheading">E. Score Limits &amp; Risk Bands</h4>
+            <p>The score is bounded strictly between <strong>0 and 100</strong> and maps directly to four risk levels:</p>
+            <div class="algo-bands-grid">
+              <span class="band-tag band-low">0–24: Low</span>
+              <span class="band-tag band-elevated">25–49: Elevated</span>
+              <span class="band-tag band-high">50–74: High</span>
+              <span class="band-tag band-critical">75–100: Critical</span>
+            </div>
+            <p class="mt-xs">When the score crosses the configured threshold of <strong id="info-threshold">75</strong>, an active sanitization recommendation alert is displayed.</p>
+          </div>
+
+          <!-- Section F: Sanitization Reset -->
+          <div class="algo-section">
+            <h4 class="algo-subheading">F. Sanitization Reset</h4>
+            <p>Activating <strong>&ldquo;Mark as Sanitized&rdquo;</strong> records an operator-reported cleaning action with a timestamp, archives the pre-reset score, and resets the authoritative model score to <strong>0.0</strong>.</p>
+          </div>
+
+          <!-- Section G: Scientific Limitations -->
+          <div class="algo-section algo-disclaimer-box">
+            <h4 class="algo-subheading disclaimer-heading">G. Scientific Limitations</h4>
+            <p class="disclaimer-text">
+              &ldquo;This is an experimental relative-risk estimate based on contact activity and environmental conditions. Capacitive touch sensors and temperature/humidity measurements do not detect bacteria or viruses. The weights and environmental model require validation.&rdquo;
+            </p>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="algo-modal-ok-btn" class="btn btn-primary" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>SmartLogix ESP32 IoT Dashboard &bull; Contamination-Risk Estimator Model v1.0 &bull; Modular Firebase SDK v10.12.0</p>
+    </footer>
+  </div>
+
+  <!-- Application Script (ES Module) -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>

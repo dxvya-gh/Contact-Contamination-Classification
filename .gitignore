@@ -1,0 +1,24 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+# Dependencies
+node_modules/
+
+# Generated build output
+dist/
+build/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+service-account*.json
+firebase-adminsdk*.json
+secrets.h
+credentials.h
+
+# Local editor and operating system files
+.vscode/
+.DS_Store
+Thumbs.db
